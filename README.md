@@ -15,7 +15,8 @@ Stack : Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · Prisma 7 · P
 | 5. Suivi | Indicateurs (KPI), diligences, risques et problèmes, budget | ✅ |
 | 6. Pilotage | Tableau de bord, score de santé, « Mes actions », alertes, rapports et exports | ✅ |
 | Phase 2 — 2.1 | Référentiel stratégique : plan, axes, objectifs, résultats attendus | ✅ |
-| Phase 2 — 2.2 à 2.6 | PTBA, liaison PTBA ↔ projets, KPI harmonisés, évaluations, tableau de bord DG/DGA | en cours |
+| Phase 2 — 2.2 | PTBA : exercices annuels, activités (trimestres, budget par nature), portefeuille filtrable | ✅ |
+| Phase 2 — 2.3 à 2.6 | Liaison PTBA ↔ projets, KPI harmonisés, évaluations, tableau de bord DG/DGA | en cours |
 | 7. Modules complémentaires | Livrables, documents (GED), réunions et décisions, RACI, calendrier, import CSV | ✅ |
 
 ## Lancer en développement (Windows)
@@ -88,6 +89,10 @@ sont marqués `Secure` en production ; pour un test en HTTP pur, mettre `INSECUR
 - **Alertes** : recalculées au maximum toutes les 30 minutes à l'ouverture de l'application, et dédupliquées.
   Couvrent les tâches et jalons en retard ou proches, les diligences en retard, les risques critiques, le seuil
   budgétaire, la fin de projet proche, les fiches de temps non soumises et celles à valider.
+- **Activité PTBA** : budget prévu = somme des quatre natures (RH, prestations, investissements, fonctionnement) ;
+  taux d'exécution budgétaire = payé ÷ prévu × 100. L'avancement est la moyenne des projets liés pondérée par leur
+  contribution, sauf valeur saisie manuellement, qui exige une justification. Au moins un trimestre de réalisation
+  est obligatoire, et un exercice clos verrouille ses activités.
 - **Jalons** : état calculé (à venir, échéance proche à 7 jours, dépassé, atteint, atteint en retard).
 
 ## Sécurité (étape 1)

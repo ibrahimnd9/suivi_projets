@@ -15,7 +15,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         { href: "/", label: "Accueil", icon: "home" },
         { href: "/mes-actions", label: "Mes actions", icon: "actions" },
         { href: "/strategie", label: "Stratégie", icon: "strategy" },
-        { href: "/ptba", label: "PTBA", icon: "ptba", soon: true },
+        { href: "/ptba", label: "PTBA", icon: "ptba" },
         { href: "/portefeuille", label: "Portefeuille", icon: "portfolio" },
         { href: "/temps", label: "Ma fiche de temps", icon: "timesheet" },
         { href: "/tableau-de-bord", label: "Tableau de bord", icon: "dashboard" },
