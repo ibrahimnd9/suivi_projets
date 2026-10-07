@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+backups
+src/generated
+.claude
+.agents
+.windsurf
+
+uploads

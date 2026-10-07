@@ -1,0 +1,1148 @@
+// SYNAP-SUIVI — schéma de données
+// Étape 1 : socle (utilisateurs, sessions, organisation, référentiels, traçabilité)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Utilisateurs & authentification ────────────────────────────────────────
+
+/// Profil global. Les rôles propres à chaque projet (chef, membre…) viendront à l'étape 2.
+enum Profile {
+  ADMIN
+  DIRECTION
+  MANAGER
+  UTILISATEUR
+}
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  firstName           String
+  lastName            String
+  passwordHash        String
+  profile             Profile   @default(UTILISATEUR)
+  jobTitle            String?
+  phone               String?
+  directionId         String?
+  direction           Direction? @relation(fields: [directionId], references: [id], onDelete: SetNull)
+  poleId              String?
+  pole                Pole?      @relation(fields: [poleId], references: [id], onDelete: SetNull)
+  /// Supérieur hiérarchique (N+1) : valide les fiches de temps
+  managerId           String?
+  manager             User?      @relation("Hierarchy", fields: [managerId], references: [id], onDelete: SetNull)
+  reports             User[]     @relation("Hierarchy")
+  /// Capacité de travail hebdomadaire (heures)
+  weeklyCapacityHours Decimal    @default(40) @db.Decimal(5, 2)
+  active              Boolean    @default(true)
+  mustChangePassword  Boolean    @default(true)
+  passwordChangedAt   DateTime?
+  failedLoginCount    Int        @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  sessions         Session[]
+  auditLogs        AuditLog[]
+  projectMembers   ProjectMember[]
+  workItemsOwned   WorkItem[]        @relation("WorkItemOwner")
+  kpisOwned        Kpi[]
+  axesOwned        StrategicAxis[]
+  objectivesOwned  StrategicObjective[]
+  resultsOwned     ExpectedResult[]
+  ptbaActivitiesOwned PtbaActivity[]    @relation("PtbaActivityOwner")
+  ptbaParticipations  PtbaParticipant[]
+  deliverablesOwned Deliverable[]
+  documentsUploaded Document[]
+  meetingsCreated  Meeting[]
+  meetingParticipations MeetingParticipant[]
+  decisionsTaken   Decision[]
+  kpiValues        KpiValue[]
+  diligencesOwned  Diligence[]
+  risksOwned       Risk[]
+  notifications    Notification[]
+  timesheets       Timesheet[]
+  timeEntries      TimeEntry[]
+  timesheetsReviewed Timesheet[]     @relation("TimesheetReviewer")
+  workItemAssignments WorkItemAssignee[]
+  raciAssignments  RaciAssignment[]
+  milestonesOwned  Milestone[]
+  projectsSponsored Project[] @relation("ProjectSponsor")
+  projectsOwned    Project[]  @relation("ProjectOwner")
+  projectsLed      Project[]  @relation("ProjectLead")
+  projectsCreated  Project[]  @relation("ProjectCreator")
+
+  @@index([directionId])
+  @@index([poleId])
+  @@index([managerId])
+}
+
+model Session {
+  /// Empreinte SHA-256 du jeton stocké dans le cookie (le jeton brut n'est jamais conservé)
+  id         String   @id
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ─── Organisation ───────────────────────────────────────────────────────────
+
+model Direction {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  poles    Pole[]
+  users          User[]
+  projects       Project[]
+  ptbaActivities PtbaActivity[]
+}
+
+model Pole {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  name        String
+  directionId String
+  direction   Direction @relation(fields: [directionId], references: [id], onDelete: Restrict)
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  users    User[]
+  projects Project[]
+
+  @@index([directionId])
+}
+
+// ─── Référentiels paramétrables ─────────────────────────────────────────────
+
+enum RefKind {
+  MEETING_TYPE
+  TASK_STATUS
+  DILIGENCE_STATUS
+  BUDGET_NATURE
+  PROJECT_TYPE
+  PROJECT_CATEGORY
+  PROJECT_STATUS
+  PRIORITY
+  ACTIVITY_TYPE
+  RISK_CATEGORY
+  KPI_TYPE
+  DOCUMENT_CATEGORY
+  FUNDING_SOURCE
+  STRATEGIC_AXIS
+}
+
+/// Listes de valeurs gérées par l'administrateur, sans modification du code.
+model RefItem {
+  id        String   @id @default(cuid())
+  kind      RefKind
+  code      String
+  label     String
+  color     String?
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  isDefault Boolean  @default(false)
+  /// Propriétés propres au type (ex. statut « clôturé », poids d'une priorité…)
+  meta      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  timeEntriesByActivity TimeEntry[] @relation("TimeEntryActivity")
+  kpisByType            Kpi[]       @relation("KpiType")
+  diligencesByStatus    Diligence[] @relation("DiligenceStatus")
+  diligencesByPriority  Diligence[] @relation("DiligencePriority")
+  risksByCategory       Risk[]      @relation("RiskCategory")
+  budgetLinesByNature   BudgetLine[] @relation("BudgetNature")
+  documentsByCategory   Document[]   @relation("DocumentCategory")
+  meetingsByType        Meeting[]    @relation("MeetingType")
+  workItemsByStatus   WorkItem[]  @relation("WorkItemStatus")
+  workItemsByPriority WorkItem[]  @relation("WorkItemPriority")
+  milestonesByCriticality Milestone[] @relation("MilestoneCriticality")
+  axesLinked               StrategicAxis[] @relation("AxisRefItem")
+  ptbaActivitiesByPriority PtbaActivity[]  @relation("PtbaActivityPriority")
+  projectsByType     Project[] @relation("ProjectType")
+  projectsByCategory Project[] @relation("ProjectCategory")
+  projectsByPriority Project[] @relation("ProjectPriority")
+  projectsByStatus   Project[] @relation("ProjectStatus")
+  projectsByAxis     Project[] @relation("ProjectAxis")
+  projectsByFunding  Project[] @relation("ProjectFunding")
+  customFields       CustomFieldDef[] @relation("FieldProjectType")
+
+  @@unique([kind, code])
+  @@index([kind, sortOrder])
+}
+
+// ─── Paramètres généraux ────────────────────────────────────────────────────
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Journal de traçabilité ─────────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Nom de l'auteur au moment de l'action (conservé si l'utilisateur est supprimé)
+  userName    String?
+  /// CREATE, UPDATE, DELETE, LOGIN, LOGIN_FAILED, LOGOUT, PASSWORD_CHANGE…
+  action      String
+  entity      String
+  entityId    String?
+  entityLabel String?
+  field       String?
+  oldValue    String?
+  newValue    String?
+  ipAddress   String?
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+  @@index([userId])
+}
+
+// ─── Projets ────────────────────────────────────────────────────────────────
+
+/// Rôle d'un utilisateur sur un projet donné (indépendant du profil global)
+enum ProjectRole {
+  CHEF_DE_PROJET
+  RESPONSABLE
+  MEMBRE
+  OBSERVATEUR
+}
+
+model Project {
+  id          String  @id @default(cuid())
+  /// Code automatique : PRJ-2026-001
+  code        String  @unique
+  name        String
+  description String?
+  /// Objectif général
+  goal        String?
+  /// Objectifs spécifiques (une ligne par objectif)
+  objectives  String?
+
+  // Classement (référentiels paramétrables)
+  typeId     String?
+  type       RefItem? @relation("ProjectType", fields: [typeId], references: [id], onDelete: SetNull)
+  categoryId String?
+  category   RefItem? @relation("ProjectCategory", fields: [categoryId], references: [id], onDelete: SetNull)
+  priorityId String?
+  priority   RefItem? @relation("ProjectPriority", fields: [priorityId], references: [id], onDelete: SetNull)
+  statusId   String
+  status     RefItem  @relation("ProjectStatus", fields: [statusId], references: [id], onDelete: Restrict)
+
+  // Rattachement organisationnel
+  directionId String?
+  direction   Direction? @relation(fields: [directionId], references: [id], onDelete: SetNull)
+  poleId      String?
+  pole        Pole?      @relation(fields: [poleId], references: [id], onDelete: SetNull)
+
+  // Acteurs
+  sponsorId String?
+  sponsor   User?   @relation("ProjectSponsor", fields: [sponsorId], references: [id], onDelete: SetNull)
+  /// Responsable / manager du projet
+  ownerId   String?
+  owner     User?   @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  /// Chef de projet
+  leadId    String?
+  lead      User?   @relation("ProjectLead", fields: [leadId], references: [id], onDelete: SetNull)
+  externalStakeholders String?
+
+  // Dates et avancement
+  startDate       DateTime?
+  endDatePlanned  DateTime?
+  endDateActual   DateTime?
+  /// Avancement global en % (saisi manuellement tant que les tâches n'existent pas)
+  progress        Decimal   @default(0) @db.Decimal(5, 2)
+
+  // Volet stratégique
+  strategic          Boolean  @default(false)
+  strategicAxisId    String?
+  strategicAxis      RefItem? @relation("ProjectAxis", fields: [strategicAxisId], references: [id], onDelete: SetNull)
+  strategicObjective String?
+  ptbaReference      String?
+  ptbaActivity       String?
+
+  // Budget prévisionnel (suivi détaillé à l'étape 5)
+  budgetPlanned   Decimal? @db.Decimal(16, 2)
+  fundingSourceId String?
+  fundingSource   RefItem? @relation("ProjectFunding", fields: [fundingSourceId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdBy   User?    @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  /// L'avancement est recalculé à partir des tâches (sinon il reste saisi à la main)
+  progressAuto Boolean @default(true)
+
+  ptbaLinks    PtbaProjectLink[]
+  members      ProjectMember[]
+  workItems    WorkItem[]
+  timeEntries  TimeEntry[]
+  kpis         Kpi[]
+  deliverables Deliverable[]
+  documents    Document[]
+  meetings     Meeting[]
+  decisions    Decision[]
+  diligences   Diligence[]
+  risks        Risk[]
+  budgetLines  BudgetLine[]
+  milestones   Milestone[]
+  customFields CustomFieldDef[]
+  fieldValues  CustomFieldValue[]
+
+  @@index([statusId])
+  @@index([directionId])
+  @@index([leadId])
+  @@index([ownerId])
+}
+
+model ProjectMember {
+  id           String      @id @default(cuid())
+  projectId    String
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         ProjectRole @default(MEMBRE)
+  /// Contribution attendue, en heures (utilisée plus tard pour la charge)
+  plannedHours Decimal?    @db.Decimal(8, 2)
+  createdAt    DateTime    @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+// ─── Champs personnalisés ───────────────────────────────────────────────────
+
+enum FieldType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  AMOUNT
+  PERCENT
+  DATE
+  SELECT
+  MULTISELECT
+  CHECKBOX
+  URL
+}
+
+/// Définition d'un champ : commune à un type de projet, ou propre à un seul projet.
+model CustomFieldDef {
+  id            String    @id @default(cuid())
+  label         String
+  code          String
+  fieldType     FieldType
+  /// Valeurs possibles pour SELECT / MULTISELECT
+  options       String[]
+  unit          String?
+  helpText      String?
+  required      Boolean   @default(false)
+  sortOrder     Int       @default(0)
+  active        Boolean   @default(true)
+  /// Champ commun à tous les projets de ce type
+  projectTypeId String?
+  projectType   RefItem?  @relation("FieldProjectType", fields: [projectTypeId], references: [id], onDelete: Cascade)
+  /// Champ propre à un projet précis
+  projectId     String?
+  project       Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  values CustomFieldValue[]
+
+  @@unique([projectTypeId, code])
+  @@unique([projectId, code])
+  @@index([projectTypeId])
+  @@index([projectId])
+}
+
+model CustomFieldValue {
+  id           String         @id @default(cuid())
+  definitionId String
+  definition   CustomFieldDef @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  projectId    String
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Valeur sérialisée en texte, interprétée selon `fieldType`
+  value        String?
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([definitionId, projectId])
+  @@index([projectId])
+}
+
+
+// ─── Planification ──────────────────────────────────────────────────────────
+
+/// Niveaux de découpage : Projet → Phase → Activité → Sous-activité → Tâche.
+/// Les niveaux intermédiaires sont facultatifs.
+enum WorkItemKind {
+  PHASE
+  ACTIVITE
+  SOUS_ACTIVITE
+  TACHE
+}
+
+/// Type de lien entre deux éléments du planning
+enum DependencyKind {
+  FIN_DEBUT
+  DEBUT_DEBUT
+  FIN_FIN
+}
+
+model WorkItem {
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      WorkItem?    @relation("WorkItemTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    WorkItem[]   @relation("WorkItemTree")
+  kind        WorkItemKind
+  name        String
+  description String?
+
+  ownerId String?
+  owner   User?   @relation("WorkItemOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  statusId   String?
+  status     RefItem? @relation("WorkItemStatus", fields: [statusId], references: [id], onDelete: SetNull)
+  priorityId String?
+  priority   RefItem? @relation("WorkItemPriority", fields: [priorityId], references: [id], onDelete: SetNull)
+
+  startDate DateTime?
+  endDate   DateTime?
+  /// Avancement saisi (0-100) ; les niveaux supérieurs sont calculés à partir des tâches
+  progress  Decimal   @default(0) @db.Decimal(5, 2)
+  /// Charge prévue en heures
+  plannedHours Decimal? @db.Decimal(8, 2)
+  sortOrder Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  assignees    WorkItemAssignee[]
+  raci         RaciAssignment[]
+  timeEntries  TimeEntry[]
+  budgetLines  BudgetLine[]
+  deliverables Deliverable[]
+  dependencies WorkItemDependency[] @relation("DependentItem")
+  dependents   WorkItemDependency[] @relation("PrecedingItem")
+  milestones   Milestone[]
+
+  @@index([projectId, sortOrder])
+  @@index([parentId])
+  @@index([ownerId])
+}
+
+/// Collaborateurs associés à une tâche (en plus du responsable)
+model WorkItemAssignee {
+  id         String   @id @default(cuid())
+  workItemId String
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workItemId, userId])
+  @@index([userId])
+}
+
+model WorkItemDependency {
+  id          String         @id @default(cuid())
+  /// Élément qui dépend d'un autre
+  itemId      String
+  item        WorkItem       @relation("DependentItem", fields: [itemId], references: [id], onDelete: Cascade)
+  /// Élément précédent
+  dependsOnId String
+  dependsOn   WorkItem       @relation("PrecedingItem", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  kind        DependencyKind @default(FIN_DEBUT)
+  /// Décalage en jours (positif = attente, négatif = anticipation)
+  lagDays     Int            @default(0)
+  createdAt   DateTime       @default(now())
+
+  @@unique([itemId, dependsOnId])
+  @@index([dependsOnId])
+}
+
+enum MilestoneStatus {
+  PREVU
+  ATTEINT
+  ANNULE
+}
+
+model Milestone {
+  id          String          @id @default(cuid())
+  projectId   String
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  dueDate     DateTime
+  actualDate  DateTime?
+  status      MilestoneStatus @default(PREVU)
+  ownerId     String?
+  owner       User?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  criticalityId String?
+  criticality   RefItem?      @relation("MilestoneCriticality", fields: [criticalityId], references: [id], onDelete: SetNull)
+  /// Élément de planning associé (livrable attendu)
+  workItemId  String?
+  workItem    WorkItem?       @relation(fields: [workItemId], references: [id], onDelete: SetNull)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([projectId, dueDate])
+}
+
+
+// ─── Fiches de temps ────────────────────────────────────────────────────────
+
+/// Brouillon → Soumis → Validé / Rejeté
+enum TimesheetStatus {
+  BROUILLON
+  SOUMIS
+  VALIDE
+  REJETE
+}
+
+/// Une fiche par personne et par semaine (lundi → dimanche)
+model Timesheet {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Lundi de la semaine concernée (à minuit UTC)
+  weekStart     DateTime        @db.Date
+  status        TimesheetStatus @default(BROUILLON)
+  submittedAt   DateTime?
+  reviewedAt    DateTime?
+  reviewerId    String?
+  reviewer      User?           @relation("TimesheetReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewComment String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  entries TimeEntry[]
+
+  @@unique([userId, weekStart])
+  @@index([status])
+}
+
+model TimeEntry {
+  id          String    @id @default(cuid())
+  timesheetId String
+  timesheet   Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date        DateTime  @db.Date
+  /// Temps hors projet (administratif, congés…) si le projet est vide
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workItemId  String?
+  workItem    WorkItem? @relation(fields: [workItemId], references: [id], onDelete: SetNull)
+  activityTypeId String
+  activityType   RefItem @relation("TimeEntryActivity", fields: [activityTypeId], references: [id], onDelete: Restrict)
+  /// Durée en heures (0,25 = 15 minutes)
+  hours     Decimal  @db.Decimal(5, 2)
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+  @@index([projectId])
+  @@index([timesheetId])
+}
+
+
+// ─── Indicateurs (KPI) ──────────────────────────────────────────────────────
+
+enum KpiFrequency {
+  MENSUELLE
+  TRIMESTRIELLE
+  SEMESTRIELLE
+  ANNUELLE
+  PONCTUELLE
+}
+
+/// Sens de progression : la cible est-elle au-dessus ou en dessous de la référence ?
+enum KpiDirection {
+  HAUSSE
+  BAISSE
+}
+
+model Kpi {
+  id         String       @id @default(cuid())
+  projectId  String
+  project    Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  definition String?
+  typeId     String?
+  type       RefItem?     @relation("KpiType", fields: [typeId], references: [id], onDelete: SetNull)
+  unit       String?
+  frequency  KpiFrequency @default(MENSUELLE)
+  direction  KpiDirection @default(HAUSSE)
+  /// Valeur de référence (point de départ)
+  baseline   Decimal?     @db.Decimal(16, 2)
+  /// Valeur cible
+  target     Decimal?     @db.Decimal(16, 2)
+  ownerId    String?
+  owner      User?        @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  source     String?
+  /// Seuils de performance en % de réalisation
+  alertThreshold Decimal  @default(80) @db.Decimal(5, 2)
+  okThreshold    Decimal  @default(95) @db.Decimal(5, 2)
+  sortOrder  Int          @default(0)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  values KpiValue[]
+
+  @@index([projectId])
+}
+
+model KpiValue {
+  id           String   @id @default(cuid())
+  kpiId        String
+  kpi          Kpi      @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  /// Période mesurée (premier jour de la période)
+  period       DateTime @db.Date
+  value        Decimal  @db.Decimal(16, 2)
+  comment      String?
+  recordedById String?
+  recordedBy   User?    @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([kpiId, period])
+  @@index([kpiId, period])
+}
+
+// ─── Diligences / actions ───────────────────────────────────────────────────
+
+model Diligence {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  /// Origine : comité, réunion, audit…
+  origin      String?
+  description String?
+  ownerId     String?
+  owner       User?     @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  issuedAt    DateTime? @db.Date
+  dueDate     DateTime? @db.Date
+  closedAt    DateTime? @db.Date
+  statusId    String
+  status      RefItem   @relation("DiligenceStatus", fields: [statusId], references: [id], onDelete: Restrict)
+  priorityId  String?
+  priority    RefItem?  @relation("DiligencePriority", fields: [priorityId], references: [id], onDelete: SetNull)
+  comment     String?
+  /// Preuve : lien externe
+  proofUrl    String?
+  /// Réunion à l'origine de l'action
+  meetingId   String?
+  meeting     Meeting?  @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([projectId, dueDate])
+  @@index([ownerId])
+}
+
+// ─── Risques et problèmes ───────────────────────────────────────────────────
+
+enum RiskKind {
+  RISQUE
+  PROBLEME
+}
+
+enum RiskStatus {
+  IDENTIFIE
+  EN_TRAITEMENT
+  MAITRISE
+  AVERE
+  CLOS
+}
+
+model Risk {
+  id             String     @id @default(cuid())
+  projectId      String
+  project        Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind           RiskKind   @default(RISQUE)
+  title          String
+  categoryId     String?
+  category       RefItem?   @relation("RiskCategory", fields: [categoryId], references: [id], onDelete: SetNull)
+  description    String?
+  /// Échelles de 1 à 5 ; criticité = probabilité × impact
+  probability    Int        @default(3)
+  impact         Int        @default(3)
+  ownerId        String?
+  owner          User?      @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  identifiedAt   DateTime?  @db.Date
+  mitigationPlan String?
+  dueDate        DateTime?  @db.Date
+  status         RiskStatus @default(IDENTIFIE)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([projectId])
+}
+
+// ─── Budget ─────────────────────────────────────────────────────────────────
+
+model BudgetLine {
+  id         String    @id @default(cuid())
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  label      String
+  natureId   String?
+  nature     RefItem?  @relation("BudgetNature", fields: [natureId], references: [id], onDelete: SetNull)
+  /// Rattachement à une phase ou activité du planning
+  workItemId String?
+  workItem   WorkItem? @relation(fields: [workItemId], references: [id], onDelete: SetNull)
+  /// Période concernée (premier jour du mois ou de l'année)
+  period     DateTime? @db.Date
+  initial    Decimal   @default(0) @db.Decimal(16, 2)
+  revised    Decimal?  @db.Decimal(16, 2)
+  committed  Decimal   @default(0) @db.Decimal(16, 2)
+  spent      Decimal   @default(0) @db.Decimal(16, 2)
+  comment    String?
+  sortOrder  Int       @default(0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([projectId, sortOrder])
+}
+
+
+// ─── Notifications et alertes ───────────────────────────────────────────────
+
+enum NotificationLevel {
+  INFO
+  ALERTE
+  CRITIQUE
+}
+
+model Notification {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  level     NotificationLevel @default(INFO)
+  /// Famille d'alerte : TACHE_RETARD, JALON_PROCHE, DILIGENCE_RETARD, RISQUE_CRITIQUE…
+  category  String
+  title     String
+  body      String?
+  link      String?
+  /// Clé d'unicité : évite de recréer la même alerte à chaque analyse
+  dedupeKey String
+  readAt    DateTime?
+  createdAt DateTime          @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt])
+}
+
+
+// ─── Livrables ──────────────────────────────────────────────────────────────
+
+enum DeliverableStatus {
+  PREVU
+  EN_COURS
+  LIVRE
+  VALIDE
+  ANNULE
+}
+
+model Deliverable {
+  id          String            @id @default(cuid())
+  projectId   String
+  project     Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  ownerId     String?
+  owner       User?             @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  dueDate     DateTime?         @db.Date
+  actualDate  DateTime?         @db.Date
+  status      DeliverableStatus @default(PREVU)
+  version     String?
+  /// Élément de planning qui produit ce livrable
+  workItemId  String?
+  workItem    WorkItem?         @relation(fields: [workItemId], references: [id], onDelete: SetNull)
+  /// Document déposé correspondant
+  documentId  String?           @unique
+  document    Document?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([projectId, dueDate])
+}
+
+// ─── Gestion documentaire ───────────────────────────────────────────────────
+
+model Document {
+  id           String    @id @default(cuid())
+  projectId    String
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  categoryId   String?
+  category     RefItem?  @relation("DocumentCategory", fields: [categoryId], references: [id], onDelete: SetNull)
+  fileName     String
+  mimeType     String
+  /// Taille en octets
+  size         Int
+  /// Chemin relatif dans le stockage documentaire
+  storageKey   String
+  version      Int       @default(1)
+  /// Version précédente, pour l'historique
+  previousId   String?   @unique
+  previous     Document? @relation("DocumentVersions", fields: [previousId], references: [id], onDelete: SetNull)
+  next         Document? @relation("DocumentVersions")
+  uploadedById String?
+  uploadedBy   User?     @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime  @default(now())
+
+  deliverable Deliverable?
+  meeting     Meeting?    @relation("MeetingMinutes")
+
+  @@index([projectId, createdAt])
+}
+
+// ─── Réunions et décisions ──────────────────────────────────────────────────
+
+model Meeting {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date       DateTime
+  typeId     String?
+  type       RefItem? @relation("MeetingType", fields: [typeId], references: [id], onDelete: SetNull)
+  subject    String
+  location   String?
+  /// Compte rendu saisi dans l'application
+  minutes    String?
+  /// Compte rendu déposé sous forme de fichier
+  minutesDocumentId String?   @unique
+  minutesDocument   Document? @relation("MeetingMinutes", fields: [minutesDocumentId], references: [id], onDelete: SetNull)
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  participants MeetingParticipant[]
+  decisions    Decision[]
+  diligences   Diligence[]
+
+  @@index([projectId, date])
+}
+
+model MeetingParticipant {
+  id        String  @id @default(cuid())
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  present   Boolean @default(true)
+
+  @@unique([meetingId, userId])
+  @@index([userId])
+}
+
+enum DecisionStatus {
+  PRISE
+  APPLIQUEE
+  ANNULEE
+}
+
+model Decision {
+  id           String         @id @default(cuid())
+  projectId    String
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  meetingId    String?
+  meeting      Meeting?       @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  title        String
+  description  String?
+  decidedAt    DateTime       @db.Date
+  decidedById  String?
+  decidedBy    User?          @relation(fields: [decidedById], references: [id], onDelete: SetNull)
+  status       DecisionStatus @default(PRISE)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([projectId, decidedAt])
+}
+
+
+// ─── Matrice RACI ───────────────────────────────────────────────────────────
+
+enum RaciRole {
+  /// Responsible : réalise
+  R
+  /// Accountable : rend des comptes
+  A
+  /// Consulted : consulté
+  C
+  /// Informed : informé
+  I
+}
+
+model RaciAssignment {
+  id         String   @id @default(cuid())
+  workItemId String
+  workItem   WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       RaciRole
+  createdAt  DateTime @default(now())
+
+  @@unique([workItemId, userId])
+  @@index([userId])
+}
+
+
+// ─── Phase 2 : chaîne de résultats stratégique ──────────────────────────────
+// Plan stratégique → Axe → Objectif → Résultat attendu → Activité PTBA → Projet
+
+/// Période stratégique de référence (ex. PSD 2026-2030)
+model StrategicPlan {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  startYear    Int
+  endYear      Int
+  vision       String?
+  mission      String?
+  orientations String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  axes      StrategicAxis[]
+  ptbaYears PtbaYear[]
+}
+
+enum StrategicStatus {
+  PREVU
+  EN_COURS
+  ATTEINT
+  PARTIELLEMENT_ATTEINT
+  NON_ATTEINT
+  ABANDONNE
+}
+
+model StrategicAxis {
+  id          String          @id @default(cuid())
+  planId      String
+  plan        StrategicPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  description String?
+  ownerId     String?
+  owner       User?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  startDate   DateTime?       @db.Date
+  endDate     DateTime?       @db.Date
+  status      StrategicStatus @default(EN_COURS)
+  /// Enveloppe budgétaire de l'axe
+  budget      Decimal?        @db.Decimal(16, 2)
+  sortOrder   Int             @default(0)
+  /// Rapprochement avec l'axe du référentiel utilisé par les projets
+  refItemId   String?
+  refItem     RefItem?        @relation("AxisRefItem", fields: [refItemId], references: [id], onDelete: SetNull)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  objectives StrategicObjective[]
+
+  @@unique([planId, code])
+  @@index([planId, sortOrder])
+}
+
+model StrategicObjective {
+  id          String          @id @default(cuid())
+  axisId      String
+  axis        StrategicAxis   @relation(fields: [axisId], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  description String?
+  ownerId     String?
+  owner       User?           @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  status      StrategicStatus @default(EN_COURS)
+  budget      Decimal?        @db.Decimal(16, 2)
+  sortOrder   Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  results ExpectedResult[]
+
+  @@unique([axisId, code])
+  @@index([axisId, sortOrder])
+}
+
+/// Résultat attendu d'un objectif, mesuré par un ou plusieurs indicateurs
+model ExpectedResult {
+  id           String             @id @default(cuid())
+  objectiveId  String
+  objective    StrategicObjective @relation(fields: [objectiveId], references: [id], onDelete: Cascade)
+  code         String
+  description  String
+  ownerId      String?
+  owner        User?              @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  status       StrategicStatus    @default(PREVU)
+  /// Fréquence de mesure
+  frequency    KpiFrequency       @default(TRIMESTRIELLE)
+  /// Source de vérification
+  verification String?
+  sortOrder    Int                @default(0)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  activities PtbaActivity[]
+
+  @@unique([objectiveId, code])
+  @@index([objectiveId, sortOrder])
+}
+
+// ─── PTBA : exercices et activités ──────────────────────────────────────────
+
+enum PtbaYearStatus {
+  PREPARATION
+  VALIDATION_DGA
+  VALIDATION_DG
+  SOUMIS_CA
+  EN_EXECUTION
+  CLOS
+}
+
+/// Plan de travail et budget annuel (PTBA 2026, 2027…)
+model PtbaYear {
+  id             String         @id @default(cuid())
+  year           Int            @unique
+  label          String
+  planId         String?
+  plan           StrategicPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+  status         PtbaYearStatus @default(PREPARATION)
+  /// Exercice dupliqué à l'origine de celui-ci
+  sourceYearId   String?        @unique
+  sourceYear     PtbaYear?      @relation("PtbaYearCopy", fields: [sourceYearId], references: [id], onDelete: SetNull)
+  copy           PtbaYear?      @relation("PtbaYearCopy")
+  validatedDgaAt DateTime?
+  validatedDgAt  DateTime?
+  submittedCaAt  DateTime?
+  comment        String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  activities PtbaActivity[]
+
+  @@index([status])
+}
+
+enum PtbaActivityStatus {
+  NON_DEMARREE
+  EN_PREPARATION
+  EN_COURS
+  EN_RETARD
+  SUSPENDUE
+  TERMINEE
+  ANNULEE
+}
+
+model PtbaActivity {
+  id          String          @id @default(cuid())
+  yearId      String
+  year        PtbaYear        @relation(fields: [yearId], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  description String?
+  resultId    String?
+  result      ExpectedResult? @relation(fields: [resultId], references: [id], onDelete: SetNull)
+
+  // Exécution
+  ownerId     String?
+  owner       User?      @relation("PtbaActivityOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  directionId String?
+  direction   Direction? @relation(fields: [directionId], references: [id], onDelete: SetNull)
+  startDate   DateTime?  @db.Date
+  endDate     DateTime?  @db.Date
+  priorityId  String?
+  priority    RefItem?   @relation("PtbaActivityPriority", fields: [priorityId], references: [id], onDelete: SetNull)
+
+  // Suivi
+  status          PtbaActivityStatus @default(NON_DEMARREE)
+  /// Avancement consolidé depuis les projets liés, sauf si une valeur est forcée
+  progress        Decimal            @default(0) @db.Decimal(5, 2)
+  progressManual  Decimal?           @db.Decimal(5, 2)
+  progressComment String?
+
+  // Planification trimestrielle
+  q1 Boolean @default(false)
+  q2 Boolean @default(false)
+  q3 Boolean @default(false)
+  q4 Boolean @default(false)
+
+  // Budget prévu par nature
+  budgetHr         Decimal @default(0) @db.Decimal(16, 2)
+  budgetServices   Decimal @default(0) @db.Decimal(16, 2)
+  budgetInvestment Decimal @default(0) @db.Decimal(16, 2)
+  budgetOperating  Decimal @default(0) @db.Decimal(16, 2)
+  // Budget exécuté
+  committed Decimal @default(0) @db.Decimal(16, 2)
+  paid      Decimal @default(0) @db.Decimal(16, 2)
+
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  participants PtbaParticipant[]
+  projectLinks PtbaProjectLink[]
+
+  @@unique([yearId, code])
+  @@index([yearId, sortOrder])
+  @@index([resultId])
+  @@index([ownerId])
+}
+
+model PtbaParticipant {
+  id         String       @id @default(cuid())
+  activityId String
+  activity   PtbaActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([activityId, userId])
+  @@index([userId])
+}
+
+/// Correspondance activité PTBA ↔ projet, avec part de contribution
+model PtbaProjectLink {
+  id           String       @id @default(cuid())
+  activityId   String
+  activity     PtbaActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  projectId    String
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Part du projet dans la réalisation de l'activité (0 à 100 %)
+  contribution Decimal      @default(100) @db.Decimal(5, 2)
+  comment      String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@unique([activityId, projectId])
+  @@index([projectId])
+}

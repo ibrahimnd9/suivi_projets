@@ -1,0 +1,78 @@
+# SYNAP-SUIVI — déploiement sur serveur interne
+# Utilisation : cp .env.production.example .env.production  (puis adapter)
+#               docker compose --env-file .env.production up -d --build
+name: synap-suivi
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: synap_suivi
+      POSTGRES_USER: synap
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD requis}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synap -d synap_suivi"]
+      interval: 5s
+      retries: 10
+
+  # Applique les migrations et le seed, puis s'arrête
+  migrate:
+    build:
+      context: .
+      target: migrator
+    environment:
+      DATABASE_URL: postgresql://synap:${POSTGRES_PASSWORD}@db:5432/synap_suivi?schema=public
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@synap-suivi.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD requis}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://synap:${POSTGRES_PASSWORD}@db:5432/synap_suivi?schema=public
+      SESSION_TTL_MINUTES: ${SESSION_TTL_MINUTES:-480}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Dakar}
+      # À mettre à "true" uniquement si l'application est servie en HTTP sans proxy HTTPS
+      INSECURE_COOKIES: ${INSECURE_COOKIES:-false}
+      UPLOAD_DIR: /data/uploads
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-20}
+    volumes:
+      # Stockage documentaire (à inclure dans les sauvegardes)
+      - uploads:/data/uploads
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Sauvegarde quotidienne de la base (conservation 14 jours)
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+      - uploads:/data/uploads:ro
+    entrypoint: >
+      sh -c 'while true; do
+        pg_dump -h db -U synap -d synap_suivi -Fc -f /backups/synap_suivi_$$(date +%Y%m%d_%H%M).dump;
+        tar czf /backups/documents_$$(date +%Y%m%d_%H%M).tar.gz -C /data uploads 2>/dev/null;
+        find /backups -name "*.dump" -o -name "*.tar.gz" | xargs -r find -mtime +14 -delete 2>/dev/null;
+        sleep 86400;
+      done'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  db-data:
+  uploads:
